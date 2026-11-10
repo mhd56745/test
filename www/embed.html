@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>مشغل مدمج</title>
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: #000; overflow: hidden;
+        font-family: "Segoe UI", Tahoma, "Noto Sans Arabic", Arial, sans-serif; }
+    .box { position: relative; width: 100%; height: 100%; background: #000; }
+    video { width: 100%; height: 100%; display: block; background: #000; }
+    .overlay { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px;
+        align-items: center; justify-content: center; background: rgba(4,8,20,.72);
+        cursor: pointer; transition: opacity .25s; }
+    .overlay.hidden { opacity: 0; pointer-events: none; }
+    .play-btn { width: 66px; height: 66px; border-radius: 50%; background: #4f8cff; border: none;
+        display: flex; align-items: center; justify-content: center; }
+    .play-btn::after { content: ""; margin-right: -5px; border-style: solid;
+        border-width: 11px 0 11px 19px; border-color: transparent transparent transparent #fff; }
+    .msg { color: #dbe4ff; font-size: 13px; text-align: center; padding: 0 14px; }
+    .live { position: absolute; top: 10px; right: 10px; display: none; align-items: center; gap: 5px;
+        background: rgba(0,0,0,.55); color: #22c55e; font-weight: 700; font-size: 11.5px;
+        padding: 4px 10px; border-radius: 999px; }
+    .live.on { display: inline-flex; }
+    .live .dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e;
+        animation: pulse 1.4s infinite; }
+    @keyframes pulse { 0%,100% {opacity:1;} 50% {opacity:.3;} }
+</style>
+</head>
+<body>
+<div class="box">
+    <video id="video" playsinline muted></video>
+    <div class="live" id="liveBadge"><span class="dot"></span> مباشر</div>
+    <div class="overlay" id="overlay">
+        <button class="play-btn" aria-label="تشغيل"></button>
+        <div class="msg" id="overlayMsg">اضغط للتشغيل</div>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
+<script>
+(function () {
+"use strict";
+var chId = location.pathname.split("/")[2] || "";
+var video = document.getElementById("video");
+var overlay = document.getElementById("overlay");
+var overlayMsg = document.getElementById("overlayMsg");
+var liveBadge = document.getElementById("liveBadge");
+var hls = null, mpegtsPlayer = null, retryTimer = null, fatalCount = 0;
+
+function showPlaying() { overlay.classList.add("hidden"); liveBadge.classList.add("on"); }
+function stopEngines() {
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    if (hls) { hls.destroy(); hls = null; }
+    if (mpegtsPlayer) {
+        try { mpegtsPlayer.pause(); mpegtsPlayer.unload(); mpegtsPlayer.detachMediaElement(); mpegtsPlayer.destroy(); } catch (e) {}
+        mpegtsPlayer = null;
+    }
+    video.removeAttribute("src");
+    try { video.load(); } catch (e) {}
+}
+function start(ch) {
+    overlayMsg.textContent = "جارٍ الاتصال…";
+    if (ch.media_type === "ts") {
+        if (window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
+            mpegtsPlayer = mpegts.createPlayer({ type: "mpegts", isLive: true, url: ch.url },
+                { enableStashBuffer: false, liveBufferLatencyChasing: true, autoCleanupSourceBuffer: true });
+            mpegtsPlayer.attachMediaElement(video);
+            mpegtsPlayer.load();
+            video.play().then(showPlaying).catch(function () { overlayMsg.textContent = "اضغط للتشغيل والصوت"; });
+        } else { overlayMsg.textContent = "المتصفح لا يدعم TS"; }
+        return;
+    }
+    if (window.Hls && Hls.isSupported()) {
+        hls = new Hls({ enableWorker: true, liveSyncDurationCount: 3, maxBufferLength: 30,
+            manifestLoadingMaxRetry: 8, fragLoadingMaxRetry: 10 });
+        hls.loadSource(ch.url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, function () {
+            video.play().then(showPlaying).catch(function () { overlayMsg.textContent = "اضغط للتشغيل والصوت"; });
+        });
+        hls.on(Hls.Events.ERROR, function (evt, data) {
+            if (!data.fatal) return;
+            fatalCount++;
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR && fatalCount <= 6) {
+                retryTimer = setTimeout(function () { if (hls) hls.startLoad(); }, 1500 * fatalCount);
+            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && fatalCount <= 4) {
+                hls.recoverMediaError();
+            } else { overlayMsg.textContent = "البث غير متاح حالياً"; }
+        });
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = ch.url;
+        video.addEventListener("loadedmetadata", function () {
+            video.play().then(showPlaying).catch(function () {});
+        }, { once: true });
+    } else { overlayMsg.textContent = "المتصفح لا يدعم HLS"; }
+}
+overlay.addEventListener("click", function () {
+    video.muted = false; // بعد التفاعل المباشر نفتح الصوت
+    video.play().then(showPlaying).catch(function () {});
+});
+if (chId) {
+    fetch("/api/channels").then(function (r) { return r.json(); }).then(function (d) {
+        var ch = (d.channels || []).filter(function (c) { return c.id === chId; })[0];
+        if (!ch) { overlayMsg.textContent = "القناة غير موجودة"; return; }
+        start(ch);
+    }).catch(function () { overlayMsg.textContent = "تعذر جلب القناة"; });
+} else { overlayMsg.textContent = "لا توجد قناة"; }
+})();
+</script>
+<script src="/studio-overlay.js"></script>
+</body>
+</html>
