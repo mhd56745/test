@@ -1,0 +1,6 @@
+# ملفات لا تدخل في صورة Docker
+.git
+.gitignore
+*.md
+docker-compose.yml
+.env
