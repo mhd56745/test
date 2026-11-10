@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>مشاهدة القناة</title>
+<style>
+    :root {
+        --bg: #0b1020; --card: #141b33; --line: #232e57;
+        --accent: #4f8cff; --accent2: #22c55e; --text: #eef2ff; --muted: #93a0c2;
+        --radius: 14px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    .hidden { display: none !important; }
+    body {
+        font-family: "Segoe UI", Tahoma, "Noto Sans Arabic", Arial, sans-serif;
+        background: radial-gradient(1200px 600px at 80% -10%, #1b2650 0%, var(--bg) 55%);
+        color: var(--text); min-height: 100vh;
+        display: flex; flex-direction: column; align-items: center; padding: 20px 14px 40px;
+    }
+    .wrap { width: 100%; max-width: 980px; }
+    header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+    header .logo { font-size: 20px; font-weight: 800; display: flex; align-items: center; gap: 9px; }
+    header .logo .dot { width: 10px; height: 10px; border-radius: 50%; background: #ef4444;
+        box-shadow: 0 0 10px #ef4444; animation: pulse 1.6s infinite; }
+    @keyframes pulse { 0%,100% {opacity:1;} 50% {opacity:.35;} }
+    header .back { margin-right: auto; color: var(--muted); font-size: 13px; text-decoration: none;
+        border: 1px solid var(--line); padding: 7px 12px; border-radius: 9px; }
+    header .back:hover { color: var(--text); }
+
+    .player-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+        overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.45); }
+    .video-box { position: relative; background: #000; aspect-ratio: 16 / 9; }
+    video { width: 100%; height: 100%; display: block; background: #000; }
+    .overlay { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 14px;
+        align-items: center; justify-content: center; background: rgba(4,8,20,.72);
+        cursor: pointer; transition: opacity .25s; }
+    .overlay.hidden { opacity: 0; pointer-events: none; }
+    .overlay .play-btn { width: 78px; height: 78px; border-radius: 50%; background: var(--accent);
+        border: none; display: flex; align-items: center; justify-content: center; }
+    .overlay .play-btn::after { content: ""; margin-right: -6px; border-style: solid;
+        border-width: 13px 0 13px 22px; border-color: transparent transparent transparent #fff; }
+    .overlay .msg { color: #dbe4ff; font-size: 15px; text-align: center; padding: 0 20px; }
+
+    .bar { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        padding: 12px 14px; background: #101731; border-top: 1px solid var(--line); flex-wrap: wrap; }
+    .live-badge { display: none; align-items: center; gap: 6px; color: var(--accent2);
+        font-weight: 700; font-size: 13px; }
+    .live-badge.on { display: inline-flex; }
+    .live-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent2);
+        animation: pulse 1.4s infinite; }
+    .fs-btn { border: 1px solid var(--line); background: #182142; color: var(--text);
+        padding: 7px 14px; border-radius: 9px; font-size: 13px; }
+    .fs-btn:hover { border-color: var(--accent); }
+
+    .epg { background: #101731; border: 1px solid var(--line); border-radius: var(--radius);
+        margin-top: 14px; padding: 14px 16px; }
+    .epg .t1 { font-size: 14.5px; }
+    .epg .t1 b { color: #fff; }
+    .epg .t2 { color: var(--muted); font-size: 12.5px; margin-top: 5px; }
+    .progress { height: 5px; background: #0d1428; border-radius: 99px; overflow: hidden; margin-top: 9px; }
+    .progress i { display: block; height: 100%; background: var(--accent); transition: width 1s linear; }
+</style>
+</head>
+<body>
+<div class="wrap">
+    <header>
+        <div class="logo"><span class="dot"></span><span id="chName">القناة</span></div>
+        <a class="back" href="/">كل القنوات</a>
+    </header>
+
+    <div class="player-card">
+        <div class="video-box">
+            <video id="video" playsinline controls muted></video>
+            <div class="overlay" id="overlay">
+                <button class="play-btn" id="playBtn" aria-label="تشغيل"></button>
+                <div class="msg" id="overlayMsg">اضغط للتشغيل</div>
+            </div>
+        </div>
+        <div class="bar">
+            <span class="live-badge" id="liveBadge"><span class="dot"></span> مباشر الآن</span>
+            <button class="fs-btn" id="fsBtn">ملء الشاشة</button>
+        </div>
+    </div>
+
+    <div class="epg hidden" id="epg">
+        <div class="t1">يُبث الآن: <b id="nowTitle">—</b></div>
+        <div class="t2" id="nowSub"></div>
+        <div class="progress"><i id="nowBar" style="width:0%"></i></div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js"></script>
+<script>
+(function () {
+"use strict";
+var chId = location.pathname.split("/")[2] || "";
+var video = document.getElementById("video");
+var overlay = document.getElementById("overlay");
+var overlayMsg = document.getElementById("overlayMsg");
+var liveBadge = document.getElementById("liveBadge");
+var hls = null, mpegtsPlayer = null, retryTimer = null, fatalCount = 0, started = false;
+
+function showPlaying() { overlay.classList.add("hidden"); liveBadge.classList.add("on"); }
+
+function stopEngines() {
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    if (hls) { hls.destroy(); hls = null; }
+    if (mpegtsPlayer) {
+        try { mpegtsPlayer.pause(); mpegtsPlayer.unload(); mpegtsPlayer.detachMediaElement(); mpegtsPlayer.destroy(); } catch (e) {}
+        mpegtsPlayer = null;
+    }
+    video.removeAttribute("src");
+    try { video.load(); } catch (e) {}
+}
+
+function loadChannel(ch) {
+    document.title = ch.name + " — مباشر";
+    document.getElementById("chName").textContent = ch.name;
+    overlayMsg.textContent = "جارٍ الاتصال بالبث…";
+    var isTs = ch.media_type === "ts";
+    if (isTs) {
+        if (window.mpegts && mpegts.getFeatureList().mseLivePlayback) {
+            mpegtsPlayer = mpegts.createPlayer({ type: "mpegts", isLive: true, url: ch.url },
+                { enableStashBuffer: false, liveBufferLatencyChasing: true, autoCleanupSourceBuffer: true, lazyLoad: false });
+            mpegtsPlayer.attachMediaElement(video);
+            mpegtsPlayer.load();
+            video.play().then(showPlaying).catch(function () { overlayMsg.textContent = "اضغط للتشغيل"; });
+            mpegtsPlayer.on(mpegts.Events.ERROR, function (errType) {
+                fatalCount++;
+                if (fatalCount <= 6 && errType !== "OtherError") {
+                    overlayMsg.textContent = "انقطاع مؤقت… جارٍ إعادة المحاولة";
+                    retryTimer = setTimeout(function () {
+                        if (mpegtsPlayer) { try { mpegtsPlayer.unload(); mpegtsPlayer.load(); } catch (e) {} video.play().catch(function () {}); }
+                    }, 2000 * fatalCount);
+                } else { overlayMsg.textContent = "القناة غير متاحة حالياً — تحقق من الرابط الخارجي"; }
+            });
+        } else { overlayMsg.textContent = "المتصفح لا يدعم بث TS — استخدم تطبيق IPTV برابط m3u8"; }
+        return;
+    }
+    if (window.Hls && Hls.isSupported()) {
+        hls = new Hls({ enableWorker: true, liveSyncDurationCount: 3, maxBufferLength: 30,
+            backBufferLength: 30, manifestLoadingTimeOut: 15000, manifestLoadingMaxRetry: 8,
+            levelLoadingMaxRetry: 8, fragLoadingMaxRetry: 10 });
+        hls.loadSource(ch.url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, function () {
+            video.play().then(showPlaying).catch(function () { overlayMsg.textContent = "اضغط للتشغيل"; });
+        });
+        hls.on(Hls.Events.ERROR, function (evt, data) {
+            if (!data.fatal) return;
+            fatalCount++;
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR && fatalCount <= 6) {
+                retryTimer = setTimeout(function () { if (hls) hls.startLoad(); }, 1500 * fatalCount);
+                overlayMsg.textContent = "انقطاع مؤقت… جارٍ إعادة المحاولة";
+            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && fatalCount <= 4) {
+                hls.recoverMediaError();
+            } else {
+                overlayMsg.textContent = "القناة غير متاحة حالياً — قد تكون الفيديوهات قيد التنزيل بعد إعادة النشر";
+            }
+        });
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = ch.url;
+        video.addEventListener("loadedmetadata", function () {
+            video.play().then(showPlaying).catch(function () { overlayMsg.textContent = "اضغط للتشغيل"; });
+        }, { once: true });
+    } else { overlayMsg.textContent = "المتصفح لا يدعم تشغيل HLS"; }
+}
+
+// نافذة "يُبث الآن"
+function pollNow() {
+    if (!chId) return;
+    fetch("/api/now/" + chId).then(function (r) { return r.json(); }).then(function (d) {
+        var epg = document.getElementById("epg");
+        if (!d || !d.now) { epg.classList.add("hidden"); return; }
+        epg.classList.remove("hidden");
+        document.getElementById("nowTitle").textContent = d.now.title;
+        if (window.TVStudio) TVStudio.setNow(d.now.title);
+        var p = Math.floor(d.now.position_ms / 1000), du = Math.floor(d.now.duration_ms / 1000);
+        var pm = Math.floor(p / 60), ps = p % 60, dm = Math.floor(du / 60), ds = du % 60;
+        function z(x) { return (x < 10 ? "0" : "") + x; }
+        document.getElementById("nowSub").textContent =
+            z(pm) + ":" + z(ps) + " / " + z(dm) + ":" + z(ds) + " — التالي: " + d.now.next;
+        document.getElementById("nowBar").style.width =
+            Math.min(100, 100 * d.now.position_ms / Math.max(1, d.now.duration_ms)) + "%";
+    }).catch(function () {});
+    setTimeout(pollNow, 8000);
+}
+
+overlay.addEventListener("click", function () { video.play().then(showPlaying).catch(function () {}); });
+document.getElementById("playBtn").addEventListener("click", function (e) {
+    e.stopPropagation(); video.play().then(showPlaying).catch(function () {});
+});
+document.getElementById("fsBtn").onclick = function () {
+    var box = document.querySelector(".video-box");
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (box.requestFullscreen) box.requestFullscreen();
+};
+
+// تحميل القناة من الواجهة البرمجية
+if (chId) {
+    fetch("/api/channels").then(function (r) { return r.json(); }).then(function (d) {
+        var ch = (d.channels || []).filter(function (c) { return c.id === chId; })[0];
+        if (!ch) { overlayMsg.textContent = "القناة غير موجودة — ربما حُذفت من لوحة التحكم"; return; }
+        if (!ch.playable) {
+            overlayMsg.textContent = "القناة غير جاهزة بعد — إن كانت قناة مكتبة فانتظر انتهاء تنزيل الفيديوهات";
+        }
+        loadChannel(ch);
+        pollNow();
+    }).catch(function () { overlayMsg.textContent = "تعذر جلب بيانات القناة"; });
+} else {
+    overlayMsg.textContent = "لا توجد قناة محددة";
+}
+})();
+</script>
+<script src="/studio-overlay.js"></script>
+</body>
+</html>
