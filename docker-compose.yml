@@ -1,0 +1,29 @@
+# تشغيل تجريبي محلي (اختياري):
+#   docker compose up --build
+# ثم افتح http://localhost:8000  — ولوحة التحكم على http://localhost:8000/admin/
+services:
+  tv:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: "8000"
+      APP_NAME: "قناتي"
+      ADMIN_PASSWORD: "admin123"     # غيّرها
+      MAX_VIDEO_MB: "1024"
+      MAX_LIBRARY_MB: "2048"
+      # ---- استعادة الإعدادات عند كل إقلاع (انسخها من تبويب النسخ الاحتياطي) ----
+      # SEED_JSON: '{"version":1,"videos":[...],"channels":[...]}'
+      # ---- توافق قديم (تُرحَّل تلقائياً إلى القنوات) ----
+      # MEDIA_URL: "https://github.com/USER/REPO/releases/download/v1/movie.mp4"
+      # RESTREAM_URL: "https://example.com/live/master.m3u8"
+      # RESTREAM_NAME: "قناة خارجية"
+    volumes:
+      # احتفظ بالبيانات محلياً أثناء التجارب (Koyeb لا يدعم هذا مجاناً)
+      - tv_data:/data
+      - tv_media:/media
+    restart: unless-stopped
+
+volumes:
+  tv_data:
+  tv_media:
